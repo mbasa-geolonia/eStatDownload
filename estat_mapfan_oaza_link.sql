@@ -1,40 +1,20 @@
 -- =============================================================================
 --  estat_mapfan_oaza_link.sql
---  E-Stat 2020 小地域（町丁・字等） × MapFan DB oaza_polygon linkage
---  E-Stat 小地域統計と MapFan 大字ポリゴンの名称突合・ビュー生成
--- =============================================================================
---  Purpose / 目的
---    MapFan uses proprietary oaza/aza codes, so the link to E-Stat is made on
---    (prefcode || citycode) = SUBSTR(key_code,1,5) plus a fuzzy name match.
---    This script adds support for Hokkaido's 条-grid addresses, where MapFan
---    stores  伏古５ / 屯田２ / 北２４東  and E-Stat stores
---            伏古五条 / 屯田二条 / 北二十四条東.
+--  Links E-Stat 小地域 stats to MapFan oaza_polygon by (prefcode+citycode)
+--  plus fuzzy name matching, including Hokkaido's 条-grid naming
+--  (MapFan 伏古５ / 屯田２ / 北２４東 <-> E-Stat 伏古五条 / 屯田二条 / 北二十四条東).
 --
---  Run order / 実行順序
---    Sections 1-3 install the functions, 4 builds the link table,
---    5 is QA (read-only), 6 creates the views, 7 is optional materialization.
---
---  Idempotent: safe to re-run. Section 4 drops and rebuilds the link table.
---  Requires: PostgreSQL 9.6+ (regexp_match). PostGIS for the shape column.
+--  Sections: 1-3 functions, 4 link table, 5 QA (read-only), 6 views, 7 materialization.
+--  Idempotent. Requires PostgreSQL 9.6+ and PostGIS.
 -- =============================================================================
 
 \set ON_ERROR_STOP on
 BEGIN;
 
 -- =============================================================================
---  1. Kanji numeral parser / 漢数字パーサ
+--  1. Kanji numeral parser (漢数字パーサ) — e.g. 五->5, 十二->12, 二十四->24.
+--     Returns NULL for any non-numeral input. Does not handle 百/千.
 -- =============================================================================
---  '五'     -> 5
---  '十'     -> 10
---  '十二'   -> 12
---  '二十四' -> 24
---  '五十一' -> 51
---  Anything containing a non-numeral character returns NULL, which is the
---  safe outcome: NULL never equals anything, so the match branch cannot fire.
---
---  Deliberately does NOT handle 百/千 — no 条 grid in Japan reaches 100条,
---  and refusing them keeps the parser from silently accepting odd input.
--- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION town.kanji_to_int(p text)
 RETURNS integer
 LANGUAGE plpgsql IMMUTABLE STRICT
@@ -76,23 +56,16 @@ END
 $fn$;
 
 COMMENT ON FUNCTION town.kanji_to_int(text) IS
-'Parse a pure kanji numeral (一〜九, 十) to integer. NULL if any other char present. 漢数字→整数変換。';
+'漢数字→整数変換 (一〜九, 十 only; NULL otherwise).';
 
 
 -- =============================================================================
---  2. Canonical join keys / 突合キー生成
+--  2. Canonical join keys (突合キー生成)
+--     Both sides normalize to "base|number|tail" so the numeral is compared
+--     as an integer, e.g. MapFan 伏古５ and E-Stat 伏古五条 both -> '伏古|5|'.
 -- =============================================================================
---  Both sides decompose to  base | number | tail  so that the numeral is
---  compared as an integer and the surrounding text as-is:
---
---     MapFan 伏古５     -> '伏古|5|'      E-Stat 伏古五条       -> '伏古|5|'
---     MapFan 北２４東   -> '北|24|東'     E-Stat 北二十四条東   -> '北|24|東'
---
---  Written in LANGUAGE sql so the planner can inline them.
--- -----------------------------------------------------------------------------
 
--- MapFan side: loose. Any name containing a digit (half- or full-width) keys.
--- On its own this cannot cause a false match — the E-Stat side is the gate.
+-- MapFan side: loose, keys on any name containing a digit.
 CREATE OR REPLACE FUNCTION town.jo_key_mapfan(p text)
 RETURNS text
 LANGUAGE sql IMMUTABLE STRICT
@@ -108,12 +81,8 @@ COMMENT ON FUNCTION town.jo_key_mapfan(text) IS
 'MapFan oaza_name -> "base|N|tail" key. NULL when the name contains no digit.';
 
 
--- E-Stat side: strict. Requires a literal 条 immediately after the numeral run.
--- That anchor is what keeps 四つ木 / 南四日町 / 四十日 / 十日町 / 二十四軒
--- out of this branch entirely (all return NULL).
---
--- The 丁目 component is stripped first so comparison happens at oaza level:
---   伏古五条１丁目 -> 伏古五条 -> '伏古|5|'
+-- E-Stat side: strict, requires a literal 条 after the numeral (excludes
+-- 四つ木/南四日町/十日町 etc). 丁目 is stripped first, e.g. 伏古五条１丁目 -> '伏古|5|'.
 CREATE OR REPLACE FUNCTION town.jo_key_estat(p text)
 RETURNS text
 LANGUAGE sql IMMUTABLE STRICT
@@ -128,22 +97,14 @@ $fn$;
 COMMENT ON FUNCTION town.jo_key_estat(text) IS
 'E-Stat name -> "base|N|tail" key, only for 条-grid names. NULL otherwise. 条丁目名称の正規化キー。';
 
--- NOTE on 條 (old form): 奈良県五條市 etc. are NOT matched by the regex above,
--- so they return NULL — the safe result. Only widen to [条條] if Hokkaido data
--- is found using 條, which it should not.
+-- Old-form 條 (e.g. 奈良県五條市) is not matched, so it safely returns NULL.
 
 
 -- =============================================================================
---  3. Single match predicate / 突合判定関数
+--  3. Single match predicate (突合判定関数) — shared by the link build and
+--     any ad-hoc investigation. prefcode fences the 条 branch to Hokkaido
+--     ('01'), where the 条 grid actually exists.
 -- =============================================================================
---  All name-matching logic lives here so the link build and any ad-hoc
---  investigation use identical rules.
---
---  prefcode is passed in purely to fence the 条 branch to Hokkaido ('01').
---  The 条 grid exists only in Sapporo / Asahikawa / Obihiro / Kitami etc.,
---  and the guard removes a whole class of needless exposure such as
---  京都市下京区七条御所ノ内北町 -> '|7|御所ノ内北町' or 東京都北区上十条 -> '上|10|'.
--- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION town.oaza_name_matches(
     estat_name  text,
     mapfan_name text,
@@ -164,8 +125,7 @@ COMMENT ON FUNCTION town.oaza_name_matches(text, text, text) IS
 
 
 -- -----------------------------------------------------------------------------
---  3b. Self-test / 自己検証
---      Fails loudly at install time if the parser or keys regress.
+--  3b. Self-test — fails loudly at install time if the parser or keys regress.
 -- -----------------------------------------------------------------------------
 DO $test$
 BEGIN
@@ -205,17 +165,21 @@ COMMIT;
 
 
 -- =============================================================================
---  4. Build the correspondence table / 対応表の構築
+--  4. Build the correspondence table (対応表の構築)
+--     Resolves the fuzzy match ONCE into a table instead of re-evaluating it
+--     on every view read. match_rule records which branch fired (see QA below).
 -- =============================================================================
---  Fuzzy matching is resolved ONCE here rather than inside the view. Three OR
---  branches with function calls in a join condition force a nested loop and
---  re-evaluate on every read; a materialized correspondence turns the view
---  into a plain equality join. It is also hand-patchable for stragglers.
---
---  match_rule records which branch fired, which is what makes the QA in
---  section 5 readable.
--- -----------------------------------------------------------------------------
 BEGIN;
+
+-- Views in section 6 read from this table, so on a re-run they must be
+-- dropped first or DROP TABLE fails with a dependency error.
+DROP VIEW IF EXISTS town.v1_view;
+DROP VIEW IF EXISTS town.v2_view;
+DROP VIEW IF EXISTS town.v3_view;
+DROP VIEW IF EXISTS town.v4_view;
+DROP VIEW IF EXISTS town.v5_view;
+DROP VIEW IF EXISTS town.v6_view;
+DROP VIEW IF EXISTS town.v1_agg_view;
 
 DROP TABLE IF EXISTS town.estat_oaza_link;
 
@@ -255,39 +219,29 @@ COMMIT;
 
 
 -- =============================================================================
---  5. QA — run these before trusting the output / 検証クエリ
+--  5. QA — read-only, run before trusting the output (検証クエリ)
 -- =============================================================================
---  Read-only. Nothing below this line modifies data.
---  Duplicates here silently multiply rows in the view, and the symptom is a
---  population sum that overshoots the published municipal total.
--- -----------------------------------------------------------------------------
 
--- 5.1 How many links, by rule. 'jo_grid' should be non-zero and Hokkaido-only.
+-- 5.1 Link counts by rule.
 -- SELECT match_rule, count(*) AS links, count(DISTINCT key_code) AS key_codes
 -- FROM town.estat_oaza_link
 -- GROUP BY 1 ORDER BY 2 DESC;
 
--- 5.2 FAN-OUT A: one key_code matched to several MapFan oaza.
---     Usually the LIKE branch: MapFan 屯田2 prefix-matches 屯田20条, 屯田21条…
---     and MapFan 南四日町 prefix-matches 南四日町一丁目, 南四日町二丁目…
+-- 5.2 One key_code matched to several MapFan oaza (fan-out).
 -- SELECT key_code, estat_name, count(*) AS mapfan_oaza,
 --        string_agg(oaza_name || ' [' || match_rule || ']', ', ' ORDER BY oazacode)
 -- FROM town.estat_oaza_link
 -- GROUP BY 1, 2 HAVING count(*) > 1
 -- ORDER BY 3 DESC;
 
--- 5.3 FAN-OUT B: several key_codes stacked on one MapFan polygon.
---     Expected for the 条 grid, because jo_key_estat strips 丁目:
---     伏古五条１丁目 and 伏古五条２丁目 both reduce to 伏古|5| and both attach
---     to MapFan's single 伏古５ polygon -> overlapping identical geometries.
+-- 5.3 Several key_codes stacked on one MapFan polygon (expected for 条 grid).
 -- SELECT prefcode, citycode, oazacode, oaza_name, count(*) AS estat_rows,
 --        string_agg(estat_name, ', ' ORDER BY key_code)
 -- FROM town.estat_oaza_link
 -- GROUP BY 1, 2, 3, 4 HAVING count(*) > 1
 -- ORDER BY 5 DESC;
 
--- 5.4 Still unmatched in Hokkaido — the list that reveals the next pattern.
---     Usual remaining suspects: 通 (〜通N丁目), ヶ/ケ, 之/ノ, 舘/館, 甲/乙.
+-- 5.4 Still unmatched in Hokkaido.
 -- SELECT a.key_code, a.name
 -- FROM estat.t001081 a
 -- LEFT JOIN town.estat_oaza_link l USING (key_code)
@@ -306,8 +260,7 @@ COMMIT;
 -- WHERE a.hyosyo IN ('2','3')
 -- GROUP BY 1 ORDER BY 4 DESC;
 
--- 5.6 Bare-numeral guard: does MapFan store any oaza_name that is only digits?
---     If so it keys to '|N|' and could collide with a 三条-style E-Stat name.
+-- 5.6 Bare-numeral guard: MapFan oaza_name that is only digits.
 -- SELECT DISTINCT prefcode, citycode, oaza_name
 -- FROM town.oaza_code
 -- WHERE oaza_name ~ '^[0-9０-９]+$';
@@ -321,34 +274,15 @@ COMMIT;
 
 
 -- =============================================================================
---  6. The view / ビュー生成
+--  6. The views (ビュー生成) — one row per (E-Stat row x matched polygon),
+--     one view per E-Stat table (t001081..t001086). gid needs a deterministic
+--     ORDER BY or QGIS's feature-id cache misbehaves after a refresh.
+--
+--     DROP+CREATE, not CREATE OR REPLACE, since gid is prepended ahead of the
+--     e-stat columns. If DROP hits a dependency error, something else is built
+--     on top (materialized view / QGIS layer) — find it via pg_depend before CASCADE.
 -- =============================================================================
 BEGIN;
-
--- -----------------------------------------------------------------------------
---  6a. Pass-through view: one row per (E-Stat row x matched polygon).
---      town.oaza_code no longer appears — estat_oaza_link already carries the
---      (prefcode, citycode, oazacode) triple, so the polygon join is unchanged.
---
---      ROW_NUMBER() needs a deterministic ORDER BY. Without one, gid changes
---      on every read and QGIS's feature-id cache makes identify/select behave
---      erratically after a refresh.
--- -----------------------------------------------------------------------------
---      CREATE OR REPLACE cannot be used here: it may only append columns to
---      an existing view, and this definition inserts the MapFan code columns
---      ahead of shape. The view must be dropped and recreated.
---      If DROP fails with a dependency error, something else is built on top
---      of v1_view (a materialized view, another view, a QGIS-created layer) —
---      identify it first rather than reaching for CASCADE:
---        SELECT dependent_ns.nspname, dependent_view.relname
---        FROM pg_depend d
---        JOIN pg_rewrite r ON r.oid = d.objid
---        JOIN pg_class dependent_view ON dependent_view.oid = r.ev_class
---        JOIN pg_namespace dependent_ns ON dependent_ns.oid = dependent_view.relnamespace
---        JOIN pg_class source ON source.oid = d.refobjid
---        JOIN pg_namespace source_ns ON source_ns.oid = source.relnamespace
---        WHERE source_ns.nspname = 'town' AND source.relname = 'v1_view'
---          AND dependent_view.relname <> 'v1_view';
 
 DROP VIEW IF EXISTS town.v1_view;
 CREATE VIEW town.v1_view AS
@@ -356,11 +290,6 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001081 a
 JOIN town.estat_oaza_link l
@@ -369,9 +298,7 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');   -- kept in sync with the filter in the link build
 
 
 DROP VIEW IF EXISTS town.v2_view;
@@ -380,11 +307,6 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001082 a
 JOIN town.estat_oaza_link l
@@ -393,9 +315,7 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');
 
 DROP VIEW IF EXISTS town.v3_view;
 CREATE VIEW town.v3_view AS
@@ -403,11 +323,6 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001083 a
 JOIN town.estat_oaza_link l
@@ -416,20 +331,13 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');
 DROP VIEW IF EXISTS town.v4_view;
 CREATE VIEW town.v4_view AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001084 a
 JOIN town.estat_oaza_link l
@@ -438,20 +346,13 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');
 DROP VIEW IF EXISTS town.v5_view;
 CREATE VIEW town.v5_view AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001085 a
 JOIN town.estat_oaza_link l
@@ -460,20 +361,13 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');
 DROP VIEW IF EXISTS town.v6_view;
 CREATE VIEW town.v6_view AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY a.key_code,
                                 l.prefcode, l.citycode, l.oazacode) AS gid,
     a.*,
-    l.prefcode,
-    l.citycode,
-    l.oazacode,
-    l.oaza_name,
-    l.match_rule,
     p.shape
 FROM estat.t001086 a
 JOIN town.estat_oaza_link l
@@ -482,9 +376,7 @@ JOIN town.oaza_polygon p
   ON  p.prefcode = l.prefcode
  AND  p.citycode = l.citycode
  AND  p.oazacode = l.oazacode
-WHERE a.hyosyo IN ('2', '3');   -- redundant with the link build, but keeps the
-                                -- view correct if the link table is ever
-                                -- rebuilt under different criteria.
+WHERE a.hyosyo IN ('2', '3');
 COMMENT ON VIEW town.v1_view IS
 'E-Stat t001081 attributes joined to MapFan oaza polygons. May contain overlapping features where several 丁目 rows map to one polygon — see town.v1_agg_view. 重複ジオメトリの可能性あり。';
 
@@ -493,18 +385,9 @@ COMMIT;
 
 -- -----------------------------------------------------------------------------
 --  6b. Aggregated view — TEMPLATE, edit the measure columns before use.
---      Use this when QA 5.3 shows many stacked rows: it emits exactly one
---      feature per MapFan oaza with the counts summed, instead of overlapping
---      identical geometries where a choropleth renders whichever draws last.
---
---      Two cautions:
---        * Only SUM genuine counts. Averages and ratios need weighting.
---        * E-Stat writes '-' or 'X' for suppressed small-area values, so cast
---          defensively if the columns were imported as text.
---
---      GROUP BY on a geometry works but is slow. If QA 5.2 also shows fan-out,
---      prefer ST_Union(p.shape) grouped on the code triple only — one dissolved
---      multipolygon per oaza and no duplicate features at all.
+--      Emits one feature per MapFan oaza with counts summed, avoiding the
+--      overlapping geometries from stacked 丁目 rows. Only SUM genuine counts
+--      (not ratios), and cast '-'/'X' suppressed values defensively.
 -- -----------------------------------------------------------------------------
 -- DROP VIEW IF EXISTS town.v1_agg_view;
 -- CREATE VIEW town.v1_agg_view AS
@@ -534,16 +417,10 @@ COMMIT;
 
 
 -- =============================================================================
---  7. Optional materialization for desktop GIS / QGIS 用の実体化
+--  7. Optional materialization for desktop GIS (QGIS 用の実体化)
+--     The GIST index avoids re-running the join on every pan/zoom. After a
+--     dataset swap: rebuild town.estat_oaza_link (section 4), then refresh.
 -- =============================================================================
---  The GIST index is the real win: without it every pan and zoom in QGIS
---  re-runs the whole join.
---
---  Remember after a schema rotation / dataset swap:
---    1) rebuild town.estat_oaza_link  (section 4 — it is a table, so it does
---       NOT follow a reload of oaza_code / oaza_polygon on its own)
---    2) REFRESH MATERIALIZED VIEW town.v1_mv;
--- -----------------------------------------------------------------------------
 -- DROP MATERIALIZED VIEW IF EXISTS town.v1_mv;
 -- CREATE MATERIALIZED VIEW town.v1_mv AS SELECT * FROM town.v1_view;
 -- CREATE UNIQUE INDEX v1_mv_gid_idx   ON town.v1_mv (gid);
