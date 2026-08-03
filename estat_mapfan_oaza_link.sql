@@ -2,7 +2,9 @@
 --  estat_mapfan_oaza_link.sql
 --  Links E-Stat 小地域 stats to MapFan oaza_polygon by (prefcode+citycode)
 --  plus fuzzy name matching, including Hokkaido's 条-grid naming
---  (MapFan 伏古５ / 屯田２ / 北２４東 <-> E-Stat 伏古五条 / 屯田二条 / 北二十四条東).
+--  (MapFan 伏古５ / 屯田２ / 北２４東 <-> E-Stat 伏古五条 / 屯田二条 / 北二十四条東)
+--  and Kyoto-style aggregate district names (E-Stat 紫野 covers many MapFan
+--  chō such as 紫野西御所田町, 紫野下若草町, ...).
 --
 --  Sections: 1-3 functions, 4 link table, 5 QA (read-only), 6 views, 7 materialization.
 --  Idempotent. Requires PostgreSQL 9.6+ and PostGIS.
@@ -104,6 +106,12 @@ COMMENT ON FUNCTION town.jo_key_estat(text) IS
 --  3. Single match predicate (突合判定関数) — shared by the link build and
 --     any ad-hoc investigation. prefcode fences the 条 branch to Hokkaido
 --     ('01'), where the 条 grid actually exists.
+--
+--     The reverse-prefix branch handles Kyoto-style aggregation, where
+--     E-Stat's 小地域 name is a traditional district name (often a former
+--     元学区) that is shorter than, and a prefix of, many individual MapFan
+--     chō — e.g. E-Stat 紫野 covers MapFan 紫野西御所田町, 紫野下若草町, etc.
+--     This is a legitimate one-to-many fan-out, unlike the forward branch.
 -- =============================================================================
 CREATE OR REPLACE FUNCTION town.oaza_name_matches(
     estat_name  text,
@@ -116,6 +124,7 @@ AS $fn$
     SELECT estat_name = mapfan_name
         OR REPLACE(estat_name, '大字', '') = mapfan_name
         OR estat_name LIKE (mapfan_name || '%')
+        OR mapfan_name LIKE (estat_name || '%')
         OR ( prefcode = '01'
              AND town.jo_key_estat(estat_name) = town.jo_key_mapfan(mapfan_name) );
 $fn$;
@@ -157,6 +166,11 @@ BEGIN
     ASSERT town.oaza_name_matches('伏古五条', '伏古５', '01') IS TRUE,  'match hokkaido';
     ASSERT town.oaza_name_matches('伏古五条', '伏古５', '13') IS FALSE, 'match fenced off Tokyo';
 
+    -- Reverse prefix: E-Stat's aggregate name is a prefix of MapFan's chō
+    ASSERT town.oaza_name_matches('紫野', '紫野西御所田町', '26') IS TRUE,  'reverse prefix kyoto';
+    ASSERT town.oaza_name_matches('大宮', '大宮一ノ井町',     '26') IS TRUE,  'reverse prefix kyoto 2';
+    ASSERT town.oaza_name_matches('紫野', '出雲路神楽町',     '26') IS FALSE, 'reverse prefix no false match';
+
     RAISE NOTICE 'town.* name-matching self-test passed.';
 END
 $test$;
@@ -197,7 +211,9 @@ SELECT DISTINCT
         WHEN c.prefcode = '01'
              AND town.jo_key_estat(a.name)
                = town.jo_key_mapfan(c.oaza_name)           THEN 'jo_grid'
-        ELSE                                                    'like_prefix'
+        WHEN a.name LIKE (c.oaza_name || '%')              THEN 'like_prefix'
+        WHEN c.oaza_name LIKE (a.name || '%')              THEN 'reverse_prefix'
+        ELSE                                                    'other'
     END AS match_rule
 FROM estat.t001081 a
 JOIN town.oaza_code c
@@ -228,6 +244,8 @@ COMMIT;
 -- GROUP BY 1 ORDER BY 2 DESC;
 
 -- 5.2 One key_code matched to several MapFan oaza (fan-out).
+--     Expected for match_rule = 'reverse_prefix' (Kyoto-style aggregate names);
+--     check other rules here for unintended fan-out.
 -- SELECT key_code, estat_name, count(*) AS mapfan_oaza,
 --        string_agg(oaza_name || ' [' || match_rule || ']', ', ' ORDER BY oazacode)
 -- FROM town.estat_oaza_link
