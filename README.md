@@ -1,5 +1,7 @@
 # e-Stat 2020年国勢調査 小地域（町丁・字等）データ自動取得＆PostgreSQLインポートツール
 
+<img width="1310" height="834" alt="Screenshot 2026-07-24 at 19 30 25" src="https://github.com/user-attachments/assets/bd1599ee-9cee-46ad-8e88-a5b5db8d7ff8" />
+
 このリポジトリには、e-Stat（政府統計の総合窓口）から2020年国勢調査の小地域（町丁・字等）の統計データを全47都道府県分自動でダウンロードし、データ整形（UTF-8変換および秘匿値・該当なし記号の数値化）を行った上で、PostgreSQLデータベースへ自動インポートする一連のスクリプトが含まれています。
 
 ---
