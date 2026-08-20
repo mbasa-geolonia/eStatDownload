@@ -19,6 +19,11 @@
    - 統計値カラム（2行目に日本語名がある列）を `BIGINT` 型、識別子コードや地域名などの列を `TEXT` 型として定義します。
    - e-Stat特有の非数値記号（秘匿値の `X` や 該当数字なしの `-`）を、Pythonを用いて高速かつ正確に `0` へ置き換え、PostgreSQLへ高速一括インポート（`\copy`）します。
 
+3. MapFanポリゴンとの結合ビュー作成 (`install_mapfan_views.sh`)
+   - `estat_mapfan_oaza_link.sql` の名称突合関数（漢数字パーサ、条グリット・京都式集約地名対応）を e-Stat側スキーマへインストールします。
+   - 続けて `create_mapfan_views.sql` を実行し、e-Statの統計データとMapFanの字（oaza）ポリゴンを結合したGIS用ビュー（`v1_view`〜`v6_view`）を作成します。
+   - MapFanの参照テーブル（`oaza_code`, `oaza_polygon`）は読み取り専用の別スキーマ（既定で `town`）にあることを前提とします。
+
 ---
 
 ## 提供される統計テーブル一覧 (`statsId`)
@@ -43,7 +48,8 @@
 - 依存ツール:
   - `curl`, `unzip`, `iconv` (標準でインストール済)
   - `python3` (標準でインストール済)
-  - `postgresql` (`psql` コマンドが利用可能であること)
+  - `postgresql` (`psql` コマンドが利用可能であること、PostGIS拡張が有効なこと)
+- MapFanの `oaza_code` / `oaza_polygon` を含むスキーマ（既定で `town`）が事前に用意されていること（`install_mapfan_views.sh` 実行時のみ必要）
 
 ---
 
@@ -60,6 +66,13 @@ chmod +x download_all_estat_tables_2020.sh
 
 chmod +x import_to_postgres.sh
 ./import_to_postgres.sh
+
+### 3. MapFan結合ビューの作成
+
+`install_mapfan_views.sh` の先頭にあるデータベース接続情報と対象スキーマ（`ESTAT_SCHEMA`: 関数・ビューの作成先、`TOWN_SCHEMA`: MapFan参照テーブルの所在、読み取り専用）を環境に合わせて確認・変更した後、実行します。
+
+chmod +x install_mapfan_views.sh
+./install_mapfan_views.sh
 
 ---
 ---
@@ -82,6 +95,11 @@ This repository contains automated bash and python workflows to download, clean,
    - Merges line 1 (metadata column codes) and line 2 (Japanese Kanji descriptive titles) of e-Stat CSV headers to build human-readable Japanese column names.
    - Dynamically assigns database types: `BIGINT` for metric values and `TEXT` for location IDs/names (preserving leading zeros in region codes).
    - Uses Python to cleanly sanitize non-numeric placeholders (`X` for confidential data suppression, `-` for non-applicable zero counts) into `0` without breaking CSV quote formatting, then streams data into PostgreSQL via high-speed `\copy`.
+
+3. MapFan Polygon Join Views (`install_mapfan_views.sh`)
+   - Installs the name-matching functions from `estat_mapfan_oaza_link.sql` (Kanji numeral parser, Hokkaido 条-grid and Kyoto-style aggregate district matching) into the e-Stat schema.
+   - Then runs `create_mapfan_views.sql` to build GIS-ready views (`v1_view` through `v6_view`) joining e-Stat statistics to MapFan oaza (字) polygons.
+   - Assumes the MapFan reference tables (`oaza_code`, `oaza_polygon`) already exist in a separate, read-only schema (default `town`).
 
 ---
 
@@ -107,7 +125,8 @@ The pipeline downloads and processes the 7 primary small area statistical datase
 - Dependencies:
   - `curl`, `unzip`, `iconv` (Pre-installed on macOS/Linux)
   - `python3` (Pre-installed on macOS/Linux)
-  - `postgresql` (`psql` CLI must be accessible)
+  - `postgresql` (`psql` CLI must be accessible, with the PostGIS extension enabled)
+- A schema containing MapFan's `oaza_code` / `oaza_polygon` tables (default `town`) must already exist (only required for `install_mapfan_views.sh`)
 
 ---
 
@@ -124,4 +143,11 @@ Verify your database credentials (DB Name, Username, Host, Port) inside `import_
 
 chmod +x import_to_postgres.sh
 ./import_to_postgres.sh
+
+### Step 3: Create MapFan Join Views
+
+Verify the database credentials and target schemas (`ESTAT_SCHEMA`: where the functions and views are created, `TOWN_SCHEMA`: where the read-only MapFan reference tables live) inside `install_mapfan_views.sh`, then execute:
+
+chmod +x install_mapfan_views.sh
+./install_mapfan_views.sh
 
