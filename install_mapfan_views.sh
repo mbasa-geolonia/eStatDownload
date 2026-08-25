@@ -15,7 +15,7 @@ DB_HOST="localhost"
 DB_PORT="5432"
 
 ESTAT_SCHEMA="estat"   # schema holding the imported e-Stat tables; functions and views are created here
-TOWN_SCHEMA="town"     # read-only schema holding the MapFan reference tables (oaza_code, oaza_polygon)
+TOWN_SCHEMA="town_polygon"     # read-only schema holding the MapFan reference tables (oaza_code, oaza_polygon)
 
 FUNCTIONS_SQL="estat_mapfan_oaza_link.sql"
 VIEWS_SQL="create_mapfan_views.sql"
