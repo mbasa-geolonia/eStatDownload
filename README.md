@@ -81,9 +81,13 @@ chmod +x import_to_postgres.sh
 chmod +x install_mapfan_views.sh
 ./install_mapfan_views.sh
 
-### 4. e-Stat境界ポリゴンのダウンロードとインポート（MapFanを使わない場合）
+---
 
-`download_estat_2020_polygon_data.sh` の先頭にあるデータベース接続情報とスキーマ・テーブル名（既定で `estat.small_area_2020`）を環境に合わせて確認・変更した後、実行します。
+## その他
+
+### e-Stat境界ポリゴンのダウンロードとインポート（MapFanを使わない場合）
+
+公式のe-Stat境界ポリゴンが必要な場合は、`download_estat_2020_polygon_data.sh` の先頭にあるデータベース接続情報とスキーマ・テーブル名（既定で `estat.small_area_2020`）を環境に合わせて確認・変更した後、実行します。
 
 chmod +x download_estat_2020_polygon_data.sh
 ./download_estat_2020_polygon_data.sh
