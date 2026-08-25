@@ -172,9 +172,13 @@ Verify the database credentials and target schemas (`ESTAT_SCHEMA`: where the fu
 chmod +x install_mapfan_views.sh
 ./install_mapfan_views.sh
 
-### Step 4: Download & Import e-Stat Boundary Polygons (MapFan-free alternative)
+---
 
-Verify the database credentials and schema/table names (default `estat.small_area_2020`) inside `download_estat_2020_polygon_data.sh`, then execute:
+## Miscellaneous
+
+### Download & Import e-Stat Boundary Polygons (MapFan-free alternative)
+
+If the official e-Stat polygon is needed, verify the database credentials and schema/table names (default `estat.small_area_2020`) inside `download_estat_2020_polygon_data.sh`, then execute:
 
 chmod +x download_estat_2020_polygon_data.sh
 ./download_estat_2020_polygon_data.sh
