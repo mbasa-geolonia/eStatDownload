@@ -24,6 +24,12 @@
    - 続けて `create_mapfan_views.sql` を実行し、e-Statの統計データとMapFanの字（oaza）ポリゴンを結合したGIS用ビュー（`v1_view`〜`v6_view`）を作成します。
    - MapFanの参照テーブル（`oaza_code`, `oaza_polygon`）は読み取り専用の別スキーマ（既定で `town`）にあることを前提とします。
 
+4. e-Stat境界ポリゴンのダウンロード＆インポート (`download_estat_2020_polygon_data.sh`)
+   - e-Stat GIS（統計地図・統計データダウンロードサイト、調査ID `A002005212020`）から全47都道府県分の2020年国勢調査小地域境界シェープファイルを自動ダウンロード・展開します。
+   - `ogr2ogr` を用いて、展開したシェープファイルを1つのPostGISテーブル（既定で `estat.small_area_2020`）へ結合インポートします。
+   - ジオメトリを元の座標系（EPSG:6668）からEPSG:4326へ再投影します。
+   - MapFanのポリゴンデータを使わず、e-Stat公式の境界データのみでGIS用ジオメトリを用意したい場合の代替経路です。
+
 ---
 
 ## 提供される統計テーブル一覧 (`statsId`)
@@ -49,6 +55,7 @@
   - `curl`, `unzip`, `iconv` (標準でインストール済)
   - `python3` (標準でインストール済)
   - `postgresql` (`psql` コマンドが利用可能であること、PostGIS拡張が有効なこと)
+  - `gdal`（`ogr2ogr` コマンド。`download_estat_2020_polygon_data.sh` 実行時のみ必要）
 - MapFanの `oaza_code` / `oaza_polygon` を含むスキーマ（既定で `town`）が事前に用意されていること（`install_mapfan_views.sh` 実行時のみ必要）
 
 ---
@@ -73,6 +80,13 @@ chmod +x import_to_postgres.sh
 
 chmod +x install_mapfan_views.sh
 ./install_mapfan_views.sh
+
+### 4. e-Stat境界ポリゴンのダウンロードとインポート（MapFanを使わない場合）
+
+`download_estat_2020_polygon_data.sh` の先頭にあるデータベース接続情報とスキーマ・テーブル名（既定で `estat.small_area_2020`）を環境に合わせて確認・変更した後、実行します。
+
+chmod +x download_estat_2020_polygon_data.sh
+./download_estat_2020_polygon_data.sh
 
 ---
 ---
@@ -101,6 +115,12 @@ This repository contains automated bash and python workflows to download, clean,
    - Then runs `create_mapfan_views.sql` to build GIS-ready views (`v1_view` through `v6_view`) joining e-Stat statistics to MapFan oaza (字) polygons.
    - Assumes the MapFan reference tables (`oaza_code`, `oaza_polygon`) already exist in a separate, read-only schema (default `town`).
 
+4. e-Stat Boundary Polygon Downloader/Importer (`download_estat_2020_polygon_data.sh`)
+   - Downloads and extracts the official 2020 Census small-area boundary shapefiles for all 47 prefectures from e-Stat GIS (statmap-search, survey id `A002005212020`).
+   - Uses `ogr2ogr` to import and merge the shapefiles into a single PostGIS table (default `estat.small_area_2020`).
+   - Reprojects the geometry from its source CRS (EPSG:6668) to EPSG:4326.
+   - An alternative to the MapFan-based views above, for when you want GIS geometry sourced entirely from e-Stat's own official boundaries instead of MapFan.
+
 ---
 
 ## Included e-Stat Statistical Tables (`statsId`)
@@ -126,6 +146,7 @@ The pipeline downloads and processes the 7 primary small area statistical datase
   - `curl`, `unzip`, `iconv` (Pre-installed on macOS/Linux)
   - `python3` (Pre-installed on macOS/Linux)
   - `postgresql` (`psql` CLI must be accessible, with the PostGIS extension enabled)
+  - `gdal` (the `ogr2ogr` CLI; only required for `download_estat_2020_polygon_data.sh`)
 - A schema containing MapFan's `oaza_code` / `oaza_polygon` tables (default `town`) must already exist (only required for `install_mapfan_views.sh`)
 
 ---
@@ -150,4 +171,11 @@ Verify the database credentials and target schemas (`ESTAT_SCHEMA`: where the fu
 
 chmod +x install_mapfan_views.sh
 ./install_mapfan_views.sh
+
+### Step 4: Download & Import e-Stat Boundary Polygons (MapFan-free alternative)
+
+Verify the database credentials and schema/table names (default `estat.small_area_2020`) inside `download_estat_2020_polygon_data.sh`, then execute:
+
+chmod +x download_estat_2020_polygon_data.sh
+./download_estat_2020_polygon_data.sh
 
