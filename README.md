@@ -19,16 +19,16 @@
    - 統計値カラム（2行目に日本語名がある列）を `BIGINT` 型、識別子コードや地域名などの列を `TEXT` 型として定義します。
    - e-Stat特有の非数値記号（秘匿値の `X` や 該当数字なしの `-`）を、Pythonを用いて高速かつ正確に `0` へ置き換え、PostgreSQLへ高速一括インポート（`\copy`）します。
 
-3. MapFanポリゴンとの結合ビュー作成 (`install_mapfan_views.sh`)
-   - `estat_mapfan_oaza_link.sql` の名称突合関数（漢数字パーサ、条グリット・京都式集約地名対応）を e-Stat側スキーマへインストールします。
-   - 続けて `create_mapfan_views.sql` を実行し、e-Statの統計データとMapFanの字（oaza）ポリゴンを結合したGIS用ビュー（`v1_view`〜`v6_view`）を作成します。
-   - MapFanの参照テーブル（`oaza_code`, `oaza_polygon`）は読み取り専用の別スキーマ（既定で `town`）にあることを前提とします。
-
-4. e-Stat境界ポリゴンのダウンロード＆インポート (`download_estat_2020_polygon_data.sh`)
+3. e-Stat境界ポリゴンのダウンロード＆インポート (`download_estat_2020_polygon_data.sh`)
    - e-Stat GIS（統計地図・統計データダウンロードサイト、調査ID `A002005212020`）から全47都道府県分の2020年国勢調査小地域境界シェープファイルを自動ダウンロード・展開します。
    - `ogr2ogr` を用いて、展開したシェープファイルを1つのPostGISテーブル（既定で `estat.small_area_2020`）へ結合インポートします。
    - ジオメトリを元の座標系（EPSG:6668）からEPSG:4326へ再投影します。
-   - MapFanのポリゴンデータを使わず、e-Stat公式の境界データのみでGIS用ジオメトリを用意したい場合の代替経路です。
+   - ここでインポートしたポリゴンは、e-Stat公式境界のみでGIS用ジオメトリを用意したい場合の入力になるほか、下記4.のMapFan結合の入力データとしても使われます。
+
+4. MapFanの `oaza_polygon` との結合（空間結合方式）
+   - 従来の `install_mapfan_views.sh`（町丁字名の文字列突合による結合）は誤結合が発生しやすいため廃止しました。
+   - 現在は、3.でインポートしたe-Stat境界ポリゴンとMapFanの `oaza_polygon` を空間的に突合（ポリゴン重心が属するMapFanの字ポリゴンを特定）し、e-Stat統計テーブル（`t001081`〜`t001086`）とMapFanの字ポリゴンを結合するビュー群をSQLで作成する方式に変更しています。
+   - 手順の詳細は以下のWikiページを参照してください: [Attaching E‑Stat data into MapFan DB's oaza_polygon](https://github.com/mbasa-geolonia/eStatDownload/wiki/Attaching-E%E2%80%90Stat-data-into-MapFan-DB's-oaza_polygon)
 
 ---
 
@@ -55,7 +55,7 @@
   - `python3` (標準でインストール済)
   - `postgresql` (`psql` コマンドが利用可能であること、PostGIS拡張が有効なこと)
   - `gdal`（`ogr2ogr` コマンド。`download_estat_2020_polygon_data.sh` 実行時のみ必要）
-- MapFanの `oaza_code` / `oaza_polygon` を含むスキーマ（既定で `town`）が事前に用意されていること（`install_mapfan_views.sh` 実行時のみ必要）
+- MapFanの `oaza_polygon` を含むスキーマ（既定で `town_polygon`）が事前に用意されていること（MapFanとの結合ビュー作成時のみ必要。手順はWiki参照）
 
 ---
 
@@ -73,23 +73,18 @@ chmod +x download_all_estat_tables_2020.sh
 chmod +x import_to_postgres.sh
 ./import_to_postgres.sh
 
-### 3. MapFan結合ビューの作成
+### 3. e-Stat境界ポリゴンのダウンロードとインポート
 
-`install_mapfan_views.sh` の先頭にあるデータベース接続情報と対象スキーマ（`ESTAT_SCHEMA`: 関数・ビューの作成先、`TOWN_SCHEMA`: MapFan参照テーブルの所在、読み取り専用）を環境に合わせて確認・変更した後、実行します。
-
-chmod +x install_mapfan_views.sh
-./install_mapfan_views.sh
-
----
-
-## その他
-
-### e-Stat境界ポリゴンのダウンロードとインポート（MapFanを使わない場合）
-
-公式のe-Stat境界ポリゴンが必要な場合は、`download_estat_2020_polygon_data.sh` の先頭にあるデータベース接続情報とスキーマ・テーブル名（既定で `estat.small_area_2020`）を環境に合わせて確認・変更した後、実行します。
+`download_estat_2020_polygon_data.sh` の先頭にあるデータベース接続情報とスキーマ・テーブル名（既定で `estat.small_area_2020`）を環境に合わせて確認・変更した後、実行します。
 
 chmod +x download_estat_2020_polygon_data.sh
 ./download_estat_2020_polygon_data.sh
+
+### 4. MapFanの oaza_polygon との結合
+
+`install_mapfan_views.sh` は廃止されました。MapFanの `oaza_polygon` とe-Stat統計データを空間的に結合する手順は、以下のWikiページを参照してSQLを実行してください。
+
+[Attaching E‑Stat data into MapFan DB's oaza_polygon](https://github.com/mbasa-geolonia/eStatDownload/wiki/Attaching-E%E2%80%90Stat-data-into-MapFan-DB's-oaza_polygon)
 
 ---
 ---
@@ -113,16 +108,16 @@ This repository contains automated bash and python workflows to download, clean,
    - Dynamically assigns database types: `BIGINT` for metric values and `TEXT` for location IDs/names (preserving leading zeros in region codes).
    - Uses Python to cleanly sanitize non-numeric placeholders (`X` for confidential data suppression, `-` for non-applicable zero counts) into `0` without breaking CSV quote formatting, then streams data into PostgreSQL via high-speed `\copy`.
 
-3. MapFan Polygon Join Views (`install_mapfan_views.sh`)
-   - Installs the name-matching functions from `estat_mapfan_oaza_link.sql` (Kanji numeral parser, Hokkaido 条-grid and Kyoto-style aggregate district matching) into the e-Stat schema.
-   - Then runs `create_mapfan_views.sql` to build GIS-ready views (`v1_view` through `v6_view`) joining e-Stat statistics to MapFan oaza (字) polygons.
-   - Assumes the MapFan reference tables (`oaza_code`, `oaza_polygon`) already exist in a separate, read-only schema (default `town`).
-
-4. e-Stat Boundary Polygon Downloader/Importer (`download_estat_2020_polygon_data.sh`)
+3. e-Stat Boundary Polygon Downloader/Importer (`download_estat_2020_polygon_data.sh`)
    - Downloads and extracts the official 2020 Census small-area boundary shapefiles for all 47 prefectures from e-Stat GIS (statmap-search, survey id `A002005212020`).
    - Uses `ogr2ogr` to import and merge the shapefiles into a single PostGIS table (default `estat.small_area_2020`).
    - Reprojects the geometry from its source CRS (EPSG:6668) to EPSG:4326.
-   - An alternative to the MapFan-based views above, for when you want GIS geometry sourced entirely from e-Stat's own official boundaries instead of MapFan.
+   - The imported polygons serve both as standalone GIS geometry (when you don't want to depend on MapFan) and as the input data for the MapFan join described below.
+
+4. Joining e-Stat Data to MapFan's `oaza_polygon` (Spatial Join Method)
+   - The previous `install_mapfan_views.sh` script (which matched by parsing and comparing district name strings) has been retired — it was prone to mismatches.
+   - The current method spatially matches the e-Stat boundary polygons imported in step 3 against MapFan's `oaza_polygon` (finding which MapFan oaza polygon contains each e-Stat polygon's centroid), then builds views joining the e-Stat statistical tables (`t001081`-`t001086`) to the matched MapFan oaza polygons via SQL.
+   - See the full step-by-step procedure in the wiki: [Attaching E‑Stat data into MapFan DB's oaza_polygon](https://github.com/mbasa-geolonia/eStatDownload/wiki/Attaching-E%E2%80%90Stat-data-into-MapFan-DB's-oaza_polygon)
 
 ---
 
@@ -149,7 +144,7 @@ The pipeline downloads and processes 6 primary small area statistical datasets f
   - `python3` (Pre-installed on macOS/Linux)
   - `postgresql` (`psql` CLI must be accessible, with the PostGIS extension enabled)
   - `gdal` (the `ogr2ogr` CLI; only required for `download_estat_2020_polygon_data.sh`)
-- A schema containing MapFan's `oaza_code` / `oaza_polygon` tables (default `town`) must already exist (only required for `install_mapfan_views.sh`)
+- A schema containing MapFan's `oaza_polygon` table (default `town_polygon`) must already exist (only required for the MapFan join — see the wiki linked below)
 
 ---
 
@@ -167,21 +162,16 @@ Verify your database credentials (DB Name, Username, Host, Port) inside `import_
 chmod +x import_to_postgres.sh
 ./import_to_postgres.sh
 
-### Step 3: Create MapFan Join Views
+### Step 3: Download & Import e-Stat Boundary Polygons
 
-Verify the database credentials and target schemas (`ESTAT_SCHEMA`: where the functions and views are created, `TOWN_SCHEMA`: where the read-only MapFan reference tables live) inside `install_mapfan_views.sh`, then execute:
-
-chmod +x install_mapfan_views.sh
-./install_mapfan_views.sh
-
----
-
-## Miscellaneous
-
-### Download & Import e-Stat Boundary Polygons (MapFan-free alternative)
-
-If the official e-Stat polygon is needed, verify the database credentials and schema/table names (default `estat.small_area_2020`) inside `download_estat_2020_polygon_data.sh`, then execute:
+Verify the database credentials and schema/table names (default `estat.small_area_2020`) inside `download_estat_2020_polygon_data.sh`, then execute:
 
 chmod +x download_estat_2020_polygon_data.sh
 ./download_estat_2020_polygon_data.sh
+
+### Step 4: Join e-Stat Data to MapFan's oaza_polygon
+
+`install_mapfan_views.sh` has been retired. To spatially join MapFan's `oaza_polygon` with the e-Stat statistical data, follow the SQL steps in the wiki:
+
+[Attaching E‑Stat data into MapFan DB's oaza_polygon](https://github.com/mbasa-geolonia/eStatDownload/wiki/Attaching-E%E2%80%90Stat-data-into-MapFan-DB's-oaza_polygon)
 
