@@ -9,7 +9,7 @@
 ## 概要 (Overview)
 
 1. データ自動取得 (`download_all_estat_tables_2020.sh`)
-   - 日本全国（47都道府県）の2020年国勢調査小地域統計（テーブル `T001081` 〜 `T001087`）を全自動でダウンロードします。
+   - 日本全国（47都道府県）の2020年国勢調査小地域統計（テーブル `T001081` 〜 `T001087`）を全自動でダウンロードします。なお `T001087` は現時点で全都道府県ともZIPの中身が空のため、実際にPostgreSQLへインポートされるのは `T001081` 〜 `T001086` の6テーブルです。
    - ダウンロードしたZIPアーカイブを解凍し、文字コードをWindows標準の Shift-JIS (CP932) から UTF-8 に自動変換します。
    - テーブルIDごとのディレクトリ（`utf8_csvs/T001081/` など）に整頓して保存します。
 
@@ -34,17 +34,16 @@
 
 ## 提供される統計テーブル一覧 (`statsId`)
 
-2020年国勢調査の小地域（町丁・字等）データでは、以下の7種類の主要統計テーブルを全件取得・インポートします。
+2020年国勢調査の小地域（町丁・字等）データでは、以下の6種類の主要統計テーブルを全件取得・インポートします。
 
 | テーブルID (`statsId`) | テーブル名称 (日本語) | 主な収録データ項目 |
 | :--- | :--- | :--- |
 | T001081 | 男女別人口総数及び世帯総数 | 人口総数、男、女、世帯総数 |
-| T001082 | 年齢（5歳階級、4区分）別、男女別人口 | 0〜4歳、5〜9歳 ... 85歳以上などの5歳階級別人口、15歳未満、15〜64歳、65歳以上などの年齢区分別人口 |
-| T001083 | 配偶関係、年齢（5歳階級）、男女別15歳以上人口 | 未婚、有配偶、死別、離別などの配偶関係別人口 |
-| T001084 | 世帯の種類・世帯人員別世帯数 | 一般世帯数、施設等の世帯数、単独世帯（1人世帯）、2人世帯〜6人以上世帯数 |
-| T001085 | 産業（大分類）、男女別15歳以上就業者数 | 農業・林業、建設業、製造業、情報通信業、卸売・小売業、医療・福祉などの産業大分類別就業者数 |
-| T001086 | 住宅の所有の関係別一般世帯数 | 持ち家、公営・官公庁借家、民営借家、給与住宅（社宅等）別の世帯数 |
-| T001087 | 住居の種類・住宅の所有の関係別一般世帯数 | 一戸建、長屋建、共同住宅（エレベーターの有無・階数別）別の世帯数 |
+| T001082 | 年齢（5歳階級）、男女別人口 | 総数・男・女別の0〜4歳、5〜9歳...70〜74歳の5歳階級別人口、および15歳未満、15〜64歳、65歳以上、75歳以上の年齢区分別人口（年齢「不詳」含む） |
+| T001083 | 世帯人員別一般世帯数 | 一般世帯数（世帯人員6人以上含む）、世帯人員1人〜5人別世帯数、一般世帯人員、1世帯当たり人員 |
+| T001084 | 世帯の家族類型別一般世帯数 | 一般世帯総数、親族のみの世帯、核家族世帯（うち夫婦のみ、うち夫婦と子供）、核家族以外の世帯、6歳未満・18歳未満・65歳以上の世帯員がいる一般世帯数 |
+| T001085 | 住宅の所有の関係別一般世帯数 | 住宅に住む一般世帯数、持ち家、民営借家 |
+| T001086 | 住居の建て方別一般世帯数（主世帯） | 主世帯数、一戸建、長屋建、共同住宅（1・2階建、3〜5階建、6〜10階建、11階建以上）、その他 |
 
 ---
 
@@ -104,7 +103,7 @@ This repository contains automated bash and python workflows to download, clean,
 ## Overview
 
 1. Automated Data Retrieval (`download_all_estat_tables_2020.sh`)
-   - Downloads all major statistical tables (`T001081` through `T001087`) for all 47 prefectures in Japan.
+   - Downloads all major statistical tables (`T001081` through `T001087`) for all 47 prefectures in Japan. Note: `T001087` archives are currently empty for every prefecture, so only `T001081` through `T001086` (6 tables) end up imported into PostgreSQL.
    - Unzips the archives and automatically converts the character encoding from Windows Shift-JIS (CP932) to clean UTF-8.
    - Organizes CSV files into table-specific subdirectories (`utf8_csvs/T001081/`, etc.).
 
@@ -129,17 +128,16 @@ This repository contains automated bash and python workflows to download, clean,
 
 ## Included e-Stat Statistical Tables (`statsId`)
 
-The pipeline downloads and processes the 7 primary small area statistical datasets for the 2020 Census:
+The pipeline downloads and processes 6 primary small area statistical datasets for the 2020 Census:
 
 | Table ID (`statsId`) | Table Name (Japanese) | Key Metrics / Data Included |
 | :--- | :--- | :--- |
 | T001081 | 男女別人口総数及び世帯総数 | Total Population, Male, Female, Total Households |
-| T001082 | 年齢（5歳階級、4区分）別、男女別人口 | Population by 5-Year Age Groups (0-4, 5-9 ... 85+) and Age Categories (Under 15, 15-64, 65+) |
-| T001083 | 配偶関係、年齢（5歳階級）、男女別15歳以上人口 | Population aged 15+ by Marital Status (Single, Married, Widowed, Divorced) |
-| T001084 | 世帯の種類・世帯人員別世帯数 | Private Households, Institutional Households, Household Sizes (1-person to 6+ persons) |
-| T001085 | 産業（大分類）、男女別15歳以上就業者数 | Employed Population (15+) by Industry Classification (Agriculture, Construction, Manufacturing, IT, Retail, Healthcare, etc.) |
-| T001086 | 住宅の所有の関係別一般世帯数 | Households by Housing Tenure (Owner-occupied, Public Rental, Private Rental, Company Housing) |
-| T001087 | 住居の種類・住宅の所有の関係別一般世帯数 | Households by Dwelling Type (Detached house, Tenement, Apartment building, Stories/Elevator status) |
+| T001082 | 年齢（5歳階級）、男女別人口 | Population by 5-Year Age Groups (0-4, 5-9 ... 70-74) for Total/Male/Female, plus Age Categories (Under 15, 15-64, 65+, 75+) |
+| T001083 | 世帯人員別一般世帯数 | Private Households by Household Size (1-person to 5-person, 6+ persons included in total), Household Members, Average Persons per Household |
+| T001084 | 世帯の家族類型別一般世帯数 | Private Households by Family Type (Relatives-only, Nuclear Family incl. Couple-only / Couple-with-children, Non-Nuclear Family), Households with Members Under 6, Under 18, or 65+ |
+| T001085 | 住宅の所有の関係別一般世帯数 | Private Households Living in Housing, by Tenure (Owner-occupied, Private Rental) |
+| T001086 | 住居の建て方別一般世帯数（主世帯） | Primary Households by Dwelling Type (Detached house, Tenement, Apartment Building by Stories 1-2/3-5/6-10/11+, Other) |
 
 ---
 
